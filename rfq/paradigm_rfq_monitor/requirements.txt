@@ -1,0 +1,11 @@
+sqlalchemy==2.0.17
+PyMySQL==1.1.0
+numpy==1.25.0
+scipy==1.10.1
+requests==2.24.0
+dash==2.11.1
+dash-core-components==2.0.0
+dash-table==5.0.0
+pandas==2.0.2
+psycopg2-binary==2.9.6
+websockets==11.0.3

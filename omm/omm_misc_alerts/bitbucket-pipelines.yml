@@ -1,0 +1,25 @@
+definitions:
+
+  steps:
+    - step: &release-image
+        name: Build Docker Image
+        services: [docker]
+        caches: [docker]
+        script:
+          - docker build . -t $REPO_NAME -f Dockerfile
+          - pipe: atlassian/aws-ecr-push-image:1.6.2
+            variables:
+              AWS_ACCESS_KEY_ID: ${Prop_ecruploader_AK}
+              AWS_SECRET_ACCESS_KEY: ${Prop_ecruploader_SK}
+              AWS_DEFAULT_REGION: ${AWS_REGION}
+              IMAGE_NAME: $REPO_NAME
+              TAGS: ${BITBUCKET_BUILD_NUMBER}
+          - git tag -a qa/${BITBUCKET_BUILD_NUMBER} -m "Release ${BITBUCKET_BUILD_NUMBER}"
+          - rm -frv .git/hooks/pre-push && git push origin --tags
+
+pipelines:
+  custom:
+    1. Build-Docker-Image:
+      - step:
+          <<: *release-image
+          deployment: omm_misc_alerts
