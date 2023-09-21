@@ -2,9 +2,6 @@
     Live data source from bastion MDC
 '''
 
-__author__ = "Michael Vasquez"
-__email__ = "mv@bastiontrade.com"
-
 import asyncio
 import json
 import time
@@ -16,12 +13,11 @@ from websocket import create_connection
 import pandas as pd
 from dash import Dash, html, dcc,dash_table
 from dash.dependencies import Output, Input
-from functools import lru_cache
 import datetime as dt
 import threading
 from dash import Dash
 import logging
-from collections import deque
+from collections import deque,defaultdict
 
 # from memory_profiler import profile
 logger = logging.Logger('options_ob_monitor')
@@ -36,10 +32,11 @@ lock = threading.Lock()
 
 class ThreadStream:
 
-    def __init__(self, result, exchange) -> None:
-        self.result = result
+    def __init__(self, data_dict, exchange) -> None:
+        #self.result = result
         self.buffer_q = deque()
         self.exchange = exchange
+        self.data_dict = data_dict
 
     def _get_instruments(self, options=True, exchange='Deribit'):
         '''
@@ -141,9 +138,7 @@ class ThreadStream:
                 self.last_check_len_ts = time.time()
             
             response = self.buffer_q.popleft()
-            dfn =pd.DataFrame(columns=('Time','Exchange','Instrument','Asks','Bids'))
-            #raise Exception("test")
-
+            
             if response != 'Connect success':
                 response = json.loads(response)
                 if 'tp' in response.keys():
@@ -152,16 +147,18 @@ class ThreadStream:
                     exchangeSymbolAlias = response['exchangeSymbolAlias']
                     asks = response['data']['asks']
                     bids = response['data']['bids']
+                    
                             
                     a = []
                     b = []
                     tp =  exchangeSymbolAlias.split('-')[0]
                     if tp == "ETH":
                         size = 2500
+                        # size = 250
                     else:
                         size = 150
+                        # size = 15
                     
-
                     for ask in asks:
                         if ask[1]>size:
                             a.append(str(ask))
@@ -170,47 +167,33 @@ class ThreadStream:
                             b.append(str(bid))
                     ask1 = "\n".join(a)
                     bid1 = "\n".join(b)
-                    
-                    with lock:
-                        result = self.result.copy()
-                        if len(ask1) == 0 and len(bid1) == 0:
-                            # global result
-                            
-                            exchange_to_match = exchangem
-                            instrument_to_match = exchangeSymbolAlias
-                            # Finds matching rows based on the values in the specified columns
-                            result.reset_index(drop=True, inplace=True)
-                            matching_rows = result.loc[(result['Exchange'] == exchange_to_match) & (result['Instrument'] == instrument_to_match)]#0.0058MB
-                            
-                            if not matching_rows.empty:  
-                                result = result.drop(matching_rows.index)
-                                result.reset_index(drop=True, inplace=True)
-                            
-                        else:
-                            time1 = dt.datetime.now()
-                            time2 = time1 + dt.timedelta(hours=8)
-                            
-                            ress = {'Time':[time2],'Exchange':[exchangem],'Instrument': [exchangeSymbolAlias],'Asks': [ask1],'Bids':[bid1]}
-                            dfs = pd.DataFrame(ress)#0.009596 MB
-                            
-                            dfn = dfn._append(dfs)#0.007824 MB
-                            
-                        dfn = dfn.drop_duplicates(subset=['Exchange','Instrument'], keep='last', inplace=False)
+                    #key = (exchangem,exchangeSymbolAlias)
+                    if len(ask1) != 0 or len(bid1) != 0:       
+                        time1 = dt.datetime.now()
+                        time2 = time1 + dt.timedelta(hours=8)
+                        with lock:
+                            # self.data_dict[key]['Time'] = time2
+                            # #data_dict['Exchange'].append(exchangem)
+                            # self.data_dict[key]['Asks'] = ask1
+                            # self.data_dict[key]['Bids'] = bid1
+                            self.data_dict['Time'].append(time2)
+                            self.data_dict['Exchange'].append(exchangem)
+                            self.data_dict['Instrument'].append(exchangeSymbolAlias)
+                            self.data_dict['Asks'].append(ask1)
+                            self.data_dict['Bids'].append(bid1)
+                    else:
+                         # Exchange Instrument
+                        for i in range(len(self.data_dict['Exchange'])):
+                            if self.data_dict['Exchange'][i] == exchangem and self.data_dict['Instrument'][i] == exchangeSymbolAlias:
+                                with lock:
+                                    del self.data_dict['Time'][i]
+                                    del self.data_dict['Exchange'][i]
+                                    del self.data_dict['Instrument'][i]
+                                    del self.data_dict['Asks'][i]
+                                    del self.data_dict['Bids'][i]
+                                break
                         
-                        result = pd.concat([result, dfn])#0.007824 MB
-                        #tracemalloc.start()
-                        result.reset_index(drop=True, inplace=True)
-                        result.drop_duplicates(subset=['Exchange','Instrument'], keep='last', inplace=True)#0.009418 MB-0.01005 MB
-                        #current_memory, peak_memory = tracemalloc.get_traced_memory()
-                        # log3.info(f"Current memory usage within the function: {current_memory / 10**6} MB")
-                        # log3.info(f"Peak memory usage within the function: {peak_memory / 10**6} MB")
-                        # tracemalloc.stop()
-
-                        #### clear self.result and update the dataframe inplace
-                        self.result.drop(self.result.index,inplace=True)
-                        for row, item in result.iterrows():
-                            self.result.loc[row] = item
-
+                    
                 now = dt.datetime.now()
                 hour = now.hour
                 minute = now.minute
@@ -219,13 +202,18 @@ class ThreadStream:
                 if hour == 8 and  minute == 3 and 0 <= second <5:
                     try:
                         with lock:
-                            self.result.drop(self.result.index,inplace=True)
+                            self.data_dict = {
+                            'Time': [],
+                            'Exchange': [],
+                            'Instrument': [],
+                            'Asks': [],
+                            'Bids': []
+                        }
                         logger.info("The current time is 4pm and the instrument list needs to be updated.")
                         break
                     except Exception as e:
                         logger.error(f"The current time is 4pm, but don't jump out of the loop. {str(e)}")
                         raise e
-                    #log1.info("Successful insertion of data")
             
     def run(self):
         resp = self.get_instruments(options=True, exchange=self.exchange)
@@ -241,7 +229,13 @@ class BookMonitor:
     def __init__(self) -> None:
         self.last_log_time = None
         # shared df
-        self.result =pd.DataFrame(columns=('Time','Exchange','Instrument','Asks','Bids'))
+        self.data_dict = {
+                            'Time': [],
+                            'Exchange': [],
+                            'Instrument': [],
+                            'Asks': [],
+                            'Bids': []
+                        }
         logger.info("BookMonitor Init")
 
     
@@ -254,7 +248,7 @@ class BookMonitor:
 
     def update_Table(self, df):
         with lock:
-            dash_df = self.result.copy()
+            dash_df = self.data_dict.copy()
 
         df1 = pd.DataFrame.from_dict(dash_df)
         df1.drop_duplicates(subset=['Exchange','Instrument'], keep='last', inplace=True)
@@ -275,7 +269,7 @@ class BookMonitor:
         while True:
             try:
                 logger.info("Begin reacquisition of data")
-                ts = ThreadStream(self.result, exchange="Okex")
+                ts = ThreadStream(self.data_dict, exchange="Okex")
                 ts.run() 
                 time.sleep(1)
             except Exception as e:
@@ -286,7 +280,7 @@ class BookMonitor:
         while True:
             try:
                 logger.info("Begin reacquisition of data")
-                ts = ThreadStream(self.result, exchange="Deribit")
+                ts = ThreadStream(self.data_dict, exchange="Deribit")
                 ts.run() 
                 time.sleep(1)
 
@@ -298,7 +292,7 @@ class BookMonitor:
         while True:
             try:
                 logger.info("Begin reacquisition of data")
-                ts = ThreadStream(self.result, exchange="Binance")
+                ts = ThreadStream(self.data_dict, exchange="Binance")
                 ts.run() 
                 time.sleep(1)
 
@@ -339,12 +333,5 @@ if __name__=='__main__':
     
     bm_bot = BookMonitor()
     bm_bot.main()
-
-    # result =pd.DataFrame(columns=('Time','Exchange','Instrument','Asks','Bids'))
-    # ts = ThreadStream(result)
-    # resp = ts.get_instruments(options=True, exchange="Deribit")
-    # my_list = resp['result']['symbols']
-    # tund = [item for item in my_list if 'ETH' in item or 'BTC' in item]
-    # asyncio.run(ts.stream_cex_markets(tund, exchange="Deribit"))
-    # time.sleep(1)
-    # logger.info("Begin reacquisition of data")
+    # m =  BookMonitor()
+    # m.threading1()
